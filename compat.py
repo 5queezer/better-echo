@@ -1,5 +1,5 @@
 """Compatibility shims for torchaudio 2.10+, huggingface_hub, PyTorch 2.6+,
-and whisperlivekit DiartDiarization parameter naming.
+whisperlivekit DiartDiarization parameter naming, and diarization speaker type.
 
 Import this module before any pyannote/diart imports to patch missing APIs.
 Also enables MPS (Metal) fallback on macOS for Apple Silicon GPU acceleration.
@@ -131,3 +131,25 @@ def _patched_do_init(self, config=None, **kwargs):
 
 
 _wlk_core.TranscriptionEngine._do_init = _patched_do_init
+
+# --- whisperlivekit tokens_alignment speaker type fix ---
+# get_lines_diarization() does `diarization_segment.speaker + 1` but diart
+# returns string speakers like "SPEAKER_00".  Patch the method to coerce
+# the speaker value to int via extract_number before the addition.
+import re as _re
+import whisperlivekit.tokens_alignment as _wlk_ta
+
+_orig_get_lines_diarization = _wlk_ta.TokensAlignment.get_lines_diarization
+
+
+def _patched_get_lines_diarization(self):
+    # Coerce string speakers to ints on the diarization segments before
+    # the original method tries arithmetic on them.
+    for seg in self.all_diarization_segments:
+        if isinstance(seg.speaker, str):
+            m = _re.search(r'\d+', seg.speaker)
+            seg.speaker = int(m.group()) if m else 0
+    return _orig_get_lines_diarization(self)
+
+
+_wlk_ta.TokensAlignment.get_lines_diarization = _patched_get_lines_diarization
