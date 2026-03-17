@@ -12,6 +12,12 @@ uv sync
 cp .env.example .env
 ```
 
+### Platform notes
+
+- **Linux with NVIDIA GPU** — `uv sync` installs CUDA 12.9 binaries automatically. Make sure you have NVIDIA drivers installed.
+- **macOS (Apple Silicon / M1+)** — `uv sync` installs CPU-only PyTorch. The M1/M2/M3 GPU is used automatically via PyTorch's MPS backend when available (`PYTORCH_ENABLE_MPS_FALLBACK=1` is set by the app). Expect slower inference than a dedicated NVIDIA GPU — use a smaller model size (e.g. `--model-size base` or `small`) if real-time performance is needed.
+- **macOS (Intel)** — works the same as Apple Silicon but without MPS GPU acceleration (CPU only).
+
 ### Ollama (for transcription correction)
 
 ```bash
