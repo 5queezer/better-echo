@@ -1,11 +1,18 @@
 """Compatibility shims for torchaudio 2.10+, huggingface_hub, and PyTorch 2.6+.
 
 Import this module before any pyannote/diart imports to patch missing APIs.
+Also enables MPS (Metal) fallback on macOS for Apple Silicon GPU acceleration.
 """
 
 import functools
+import os
 import sys
 import types
+
+# --- macOS MPS (Metal Performance Shaders) support ---
+# Allow PyTorch to fall back to CPU for ops not yet implemented on MPS.
+if sys.platform == "darwin":
+    os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
 # --- torchaudio compat shim for pyannote-audio 3.x + torchaudio 2.10+ ---
 # torchaudio 2.10 removed torchaudio.info() and torchaudio.AudioMetaData.
