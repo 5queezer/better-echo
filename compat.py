@@ -153,3 +153,42 @@ def _patched_get_lines_diarization(self):
 
 
 _wlk_ta.TokensAlignment.get_lines_diarization = _patched_get_lines_diarization
+
+# --- Language auto-detection stabilization ---
+# When language is None or "auto", wrap the ASR with a language-detecting
+# proxy that votes across initial audio chunks before locking in, instead of
+# relying on Whisper's per-chunk detection which often misidentifies.
+_orig_online_factory = _wlk_core.online_factory
+
+
+def _patched_online_factory(args, asr, language=None):
+    if language is None or language == "auto":
+        from language_detect import LanguageDetectingASRProxy, PerSpeakerLanguageProxy
+
+        allowed_env = os.environ.get("ALLOWED_LANGUAGES", "").strip()
+        allowed = [l.strip() for l in allowed_env.split(",") if l.strip()] or None
+
+        if getattr(args, "diarization", False):
+            proxy = PerSpeakerLanguageProxy(asr, allowed_languages=allowed)
+            asr = proxy
+        else:
+            asr = LanguageDetectingASRProxy(asr, allowed_languages=allowed)
+        # Pass language=None so SessionASRProxy is NOT also applied
+        processor = _orig_online_factory(args, asr, language=None)
+
+        # For per-speaker language tracking, patch new_speaker so the proxy
+        # knows which speaker is about to be transcribed.
+        if getattr(args, "diarization", False) and hasattr(processor, "new_speaker"):
+            _orig_new_speaker = processor.new_speaker
+
+            def _speaker_aware_new_speaker(change_speaker):
+                proxy.set_current_speaker(change_speaker.speaker)
+                return _orig_new_speaker(change_speaker)
+
+            processor.new_speaker = _speaker_aware_new_speaker
+
+        return processor
+    return _orig_online_factory(args, asr, language=language)
+
+
+_wlk_core.online_factory = _patched_online_factory
