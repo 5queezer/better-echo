@@ -1,4 +1,5 @@
-"""Compatibility shims for torchaudio 2.10+, huggingface_hub, and PyTorch 2.6+.
+"""Compatibility shims for torchaudio 2.10+, huggingface_hub, PyTorch 2.6+,
+and whisperlivekit DiartDiarization parameter naming.
 
 Import this module before any pyannote/diart imports to patch missing APIs.
 Also enables MPS (Metal) fallback on macOS for Apple Silicon GPU acceleration.
@@ -95,3 +96,38 @@ def _patched_pl_load(path_or_url, map_location=None, weights_only=None):
 
 
 _lio._load = _patched_pl_load
+
+# --- whisperlivekit DiartDiarization kwarg compat ---
+# whisperlivekit core.py passes segmentation_model= and embedding_model= but
+# DiartDiarization.__init__ expects segmentation_model_name= and
+# embedding_model_name=. Patch _do_init to apply the fix lazily (avoids
+# eagerly importing the heavy diart module).
+import whisperlivekit.core as _wlk_core
+
+_orig_do_init = _wlk_core.TranscriptionEngine._do_init
+
+
+@functools.wraps(_orig_do_init)
+def _patched_do_init(self, config=None, **kwargs):
+    if config is not None and getattr(config, "diarization", False):
+        if getattr(config, "diarization_backend", None) == "diart":
+            from whisperlivekit.diarization import diart_backend as _db
+
+            _real_init = _db.DiartDiarization.__init__
+            if not getattr(_real_init, "_kwarg_patched", False):
+
+                @functools.wraps(_real_init)
+                def _fixed_init(*a, **kw):
+                    if "segmentation_model" in kw:
+                        kw["segmentation_model_name"] = kw.pop("segmentation_model")
+                    if "embedding_model" in kw:
+                        kw["embedding_model_name"] = kw.pop("embedding_model")
+                    return _real_init(*a, **kw)
+
+                _fixed_init._kwarg_patched = True
+                _db.DiartDiarization.__init__ = _fixed_init
+
+    return _orig_do_init(self, config, **kwargs)
+
+
+_wlk_core.TranscriptionEngine._do_init = _patched_do_init
