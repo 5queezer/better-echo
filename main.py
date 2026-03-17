@@ -8,94 +8,14 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# --- torchaudio compat shim for pyannote-audio 3.x + torchaudio 2.10+ ---
-# torchaudio 2.10 removed torchaudio.info() and torchaudio.AudioMetaData.
-# Patch them back in using soundfile so pyannote can load.
-import torchaudio as _ta
+import compat  # noqa: E402, F401 — must run before pyannote/diart imports
 
-if not hasattr(_ta, "AudioMetaData"):
-    from dataclasses import dataclass
-    from io import IOBase
+import httpx  # noqa: E402
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect  # noqa: E402
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+from fastapi.responses import HTMLResponse  # noqa: E402
 
-    import soundfile as _sf
-
-    @dataclass
-    class _AudioMetaData:
-        sample_rate: int
-        num_frames: int
-        num_channels: int
-        bits_per_sample: int = 0
-        encoding: str = ""
-
-    def _torchaudio_info(file, backend=None):
-        if isinstance(file, IOBase):
-            info = _sf.info(file)
-            file.seek(0)
-        else:
-            info = _sf.info(file)
-        return _AudioMetaData(
-            sample_rate=info.samplerate,
-            num_frames=info.frames,
-            num_channels=info.channels,
-        )
-
-    _ta.AudioMetaData = _AudioMetaData
-    _ta.info = _torchaudio_info
-
-if not hasattr(_ta, "list_audio_backends"):
-    _ta.list_audio_backends = lambda: ["soundfile"]
-
-if not hasattr(_ta, "set_audio_backend"):
-    _ta.set_audio_backend = lambda backend: None
-
-import sys
-import types
-
-if not hasattr(_ta, "io"):
-    _ta_io = types.ModuleType("torchaudio.io")
-    _ta_io.StreamReader = None  # unused by whisperlivekit's diart integration
-    _ta.io = _ta_io
-    sys.modules["torchaudio.io"] = _ta_io
-
-# huggingface_hub dropped use_auth_token in favor of token.
-# Wrap the real function so any caller (even via `from X import hf_hub_download`)
-# gets the fix, by patching the underlying function object's module reference.
-import functools
-import huggingface_hub as _hfh
-import huggingface_hub.file_download as _hfh_fd
-
-_orig_hf_hub_download = _hfh_fd.hf_hub_download
-
-@functools.wraps(_orig_hf_hub_download)
-def _patched_hf_hub_download(*args, **kwargs):
-    if "use_auth_token" in kwargs:
-        kwargs["token"] = kwargs.pop("use_auth_token")
-    return _orig_hf_hub_download(*args, **kwargs)
-
-_hfh_fd.hf_hub_download = _patched_hf_hub_download
-_hfh.hf_hub_download = _patched_hf_hub_download
-
-# PyTorch 2.6+ defaults to weights_only=True in torch.load, which rejects
-# pyannote checkpoints that contain custom classes. Patch lightning's loader
-# to use weights_only=False for local files (trusted HF-downloaded models).
-import torch
-import lightning_fabric.utilities.cloud_io as _lio
-
-_orig_pl_load = _lio._load
-
-@functools.wraps(_orig_pl_load)
-def _patched_pl_load(path_or_url, map_location=None, weights_only=None):
-    return _orig_pl_load(path_or_url, map_location=map_location, weights_only=False)
-
-_lio._load = _patched_pl_load
-# --- end compat shim ---
-
-import httpx
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
-
-from whisperlivekit import AudioProcessor, TranscriptionEngine, get_inline_ui_html, parse_args
+from whisperlivekit import AudioProcessor, TranscriptionEngine, get_inline_ui_html, parse_args  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -105,8 +25,6 @@ OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.2")
 TERMS_FILE = Path(__file__).parent / "terms.txt"
 
 config = parse_args()
-transcription_engine = None
-http_client = None
 
 
 def load_terms() -> str:
@@ -216,16 +134,15 @@ async def corrected_results(results_gen, client: httpx.AsyncClient):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global transcription_engine, http_client
-    transcription_engine = TranscriptionEngine(config=config)
-    http_client = httpx.AsyncClient()
+    app.state.transcription_engine = TranscriptionEngine(config=config)
+    app.state.http_client = httpx.AsyncClient()
     logger.info("LLM correction via Ollama model=%s at %s", OLLAMA_MODEL, OLLAMA_URL)
     if TERMS:
         logger.info("Loaded %d domain terms from %s", TERMS.count("\n") + 1, TERMS_FILE)
     else:
         logger.info("No domain terms loaded (edit %s to add terms)", TERMS_FILE)
     yield
-    await http_client.aclose()
+    await app.state.http_client.aclose()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -259,13 +176,11 @@ async def handle_websocket_results(websocket, results_generator, diff_tracker=No
 
 @app.websocket("/asr")
 async def websocket_endpoint(websocket: WebSocket):
-    global transcription_engine, http_client
-
     session_language = websocket.query_params.get("language", None)
     mode = websocket.query_params.get("mode", "full")
 
     audio_processor = AudioProcessor(
-        transcription_engine=transcription_engine,
+        transcription_engine=app.state.transcription_engine,
         language=session_language,
     )
     await websocket.accept()
@@ -281,7 +196,7 @@ async def websocket_endpoint(websocket: WebSocket):
     )
 
     results_gen = await audio_processor.create_tasks()
-    corrected_gen = corrected_results(results_gen, http_client)
+    corrected_gen = corrected_results(results_gen, app.state.http_client)
 
     websocket_task = asyncio.create_task(
         handle_websocket_results(websocket, corrected_gen, diff_tracker)
