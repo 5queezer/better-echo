@@ -1,6 +1,25 @@
 # better-echo
 
-Real-time speech-to-text with LLM-powered transcription correction. Wraps [whisperlivekit](https://github.com/QuentinFuworworklP/whisperlivekit) and sends finalized lines through a local Ollama model to fix domain-specific terminology.
+Real-time speech-to-text with LLM-powered transcription correction. Streams audio from your browser, transcribes with Whisper, and sends finalized lines through a local [Ollama](https://ollama.com) model to fix punctuation, capitalization, and domain-specific terminology — all running locally on your machine.
+
+### Features
+
+- **Real-time transcription** — browser-based UI with WebSocket streaming, powered by [whisperlivekit](https://github.com/QuentinFuworworklP/whisperlivekit)
+- **LLM correction** — local Ollama model fixes Whisper output on-the-fly (punctuation, casing, terminology)
+- **Domain vocabulary** — add project-specific terms to `terms.txt` so the LLM corrects them accurately
+- **Speaker diarization** — optional multi-speaker identification via pyannote or diart
+- **Language auto-detection** — voting-based stabilization with per-speaker language tracking for multilingual groups
+- **Transcript saving** — text, JSON, or both; raw transcripts saved for reprocessing with different models later
+- **Fully local** — no cloud services, no telemetry; the only network call is to your own Ollama instance
+
+### How it works
+
+```
+Browser mic → WebSocket → Whisper (faster-whisper) → LLM correction (Ollama) → Browser UI
+                                  ↓                          ↓
+                          Speaker diarization         Domain vocabulary
+                          (pyannote / diart)            (terms.txt)
+```
 
 ## Setup
 
@@ -49,6 +68,24 @@ uv run python main.py --model-size large-v3 --language de
 
 Open the printed URL in your browser, allow microphone access, and start speaking.
 
+### Makefile targets
+
+```bash
+make serve              # Run without diarization
+make serve-diart        # Run with diart speaker diarization
+make process            # Reprocess a raw transcript with a different model
+```
+
+### Reprocessing transcripts
+
+Raw transcripts are always saved as JSONL. You can reprocess them later with a different LLM model:
+
+```bash
+uv run python process.py
+```
+
+This launches an interactive CLI that lets you pick a raw transcript, choose an Ollama model, and output corrected text or JSON.
+
 ## Environment variables
 
 | Variable | Default | Description |
@@ -58,6 +95,23 @@ Open the printed URL in your browser, allow microphone access, and start speakin
 | `OLLAMA_MODEL` | `llama3.2` | Model used for transcription correction |
 | `TRANSCRIPT_FORMAT` | `none` | Save transcripts: `text`, `json`, `both`, or `none` |
 | `LOG_LEVEL` | `INFO` | Logging verbosity (`DEBUG`, `INFO`, `WARNING`, etc.) |
+| `ALLOWED_LANGUAGES` | — | Comma-separated language codes to restrict auto-detection (e.g. `en,de,fr`) |
+
+## Domain vocabulary
+
+Edit `terms.txt` to add domain-specific terms the LLM should know about:
+
+```
+# Simple terms (correct spelling only):
+Kubernetes
+PostgreSQL
+FastAPI
+
+# Ambiguous terms (add context):
+Celery: Python distributed task queue
+RAFT: consensus algorithm for distributed systems
+Kafka: Apache Kafka event streaming platform
+```
 
 ## Transcript saving
 
@@ -77,6 +131,10 @@ Set `TRANSCRIPT_FORMAT` to continuously save transcripts to the working director
 
 No telemetry, analytics, or tracking. All audio and text processing happens locally. The only network call is to your own Ollama instance for transcription correction.
 
+## License
+
+[MIT](LICENSE)
+
 ## Changelog
 
 ### 2026-03-17
@@ -95,12 +153,3 @@ No telemetry, analytics, or tracking. All audio and text processing happens loca
 - Add Makefile with serve and serve-diart targets (#2)
 - Add macOS (Apple Silicon) compatibility (#1)
 - Transcript writer (initial)
-
-## Domain vocabulary
-
-Edit `terms.txt` to add domain-specific terms the LLM should know about:
-
-```
-Kubernetes
-Celery: Python distributed task queue
-```
