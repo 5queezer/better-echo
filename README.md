@@ -67,6 +67,24 @@ uv run python main.py --diarization --diarization-backend diart
 uv run python main.py --model-size large-v3 --language de
 ```
 
+### Makefile targets
+
+```bash
+make serve              # Run without diarization
+make serve-diart        # Run with diart speaker diarization
+make process            # Reprocess a raw transcript with a different model
+```
+
+### Reprocessing transcripts
+
+Raw transcripts are always saved as JSONL. You can reprocess them later with a different LLM model:
+
+```bash
+uv run python process.py
+```
+
+This launches an interactive CLI that lets you pick a raw transcript, choose an Ollama model, and output corrected text or JSON.
+
 ## Configuration
 
 | Variable | Default | Description |
@@ -76,6 +94,7 @@ uv run python main.py --model-size large-v3 --language de
 | `OLLAMA_MODEL` | `llama3.2` | Model used for transcription correction |
 | `TRANSCRIPT_FORMAT` | `none` | Save transcripts: `text`, `json`, `both`, or `none` |
 | `LOG_LEVEL` | `INFO` | Logging verbosity (`DEBUG`, `INFO`, `WARNING`, etc.) |
+| `ALLOWED_LANGUAGES` | — | Comma-separated language codes to restrict auto-detection (e.g. `en,de,fr`) |
 
 ### Domain vocabulary
 
@@ -139,4 +158,3 @@ No telemetry, analytics, or tracking. All audio and text processing happens loca
 - Add Makefile with serve and serve-diart targets (#2)
 - Add macOS (Apple Silicon) compatibility (#1)
 - Transcript writer (initial)
-
