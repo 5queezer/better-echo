@@ -73,6 +73,10 @@ Set `TRANSCRIPT_FORMAT` to continuously save transcripts to the working director
   ```
 - **`both`** — saves `.txt` and `.jsonl` side by side
 
+## Privacy
+
+No telemetry, analytics, or tracking. All audio and text processing happens locally. The only network call is to your own Ollama instance for transcription correction.
+
 ## Domain vocabulary
 
 Edit `terms.txt` to add domain-specific terms the LLM should know about:
