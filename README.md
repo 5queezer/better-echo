@@ -77,6 +77,25 @@ Set `TRANSCRIPT_FORMAT` to continuously save transcripts to the working director
 
 No telemetry, analytics, or tracking. All audio and text processing happens locally. The only network call is to your own Ollama instance for transcription correction.
 
+## Changelog
+
+### 2026-03-17
+- Improved language auto-detection with voting stabilization and per-speaker tracking (#9)
+- Updated uv.lock to include all declared dependencies
+
+### 2026-03-16
+- Auto-install mlx-whisper on macOS for Apple Silicon performance (#8)
+- Add raw transcript storage and reprocessing CLI (#7)
+- Fix TypeError in audio processor diarization: coerce string speakers to int (#6)
+- Fix DiartDiarization kwarg mismatch in whisperlivekit 0.2.20 (#5)
+
+### 2026-03-15
+- Add privacy section to README (#4)
+- Add MIT license (#3)
+- Add Makefile with serve and serve-diart targets (#2)
+- Add macOS (Apple Silicon) compatibility (#1)
+- Transcript writer (initial)
+
 ## Domain vocabulary
 
 Edit `terms.txt` to add domain-specific terms the LLM should know about:
