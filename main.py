@@ -29,6 +29,7 @@ OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.2")
 TRANSCRIPT_FORMAT = os.environ.get("TRANSCRIPT_FORMAT", "none").lower()
 TERMS_FILE = Path(__file__).parent / "terms.txt"
+TRANSCRIPTS_DIR = Path(__file__).parent / "transcripts"
 
 config = parse_args()
 
@@ -111,10 +112,18 @@ class TranscriptWriter:
         self.fmt = fmt
         self._text_file = None
         self._json_file = None
+        self._raw_file = None
+
+        # Always save raw transcripts for later reprocessing
+        TRANSCRIPTS_DIR.mkdir(exist_ok=True)
+        ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        raw_path = TRANSCRIPTS_DIR / f"raw_{ts}.jsonl"
+        self._raw_file = open(raw_path, "a")
+        logger.info("Saving raw transcript to %s", raw_path)
+
         if fmt == "none":
             return
 
-        ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         if fmt in ("text", "both"):
             path = Path(f"transcript_{ts}.txt")
             self._text_file = open(path, "a")
@@ -125,11 +134,22 @@ class TranscriptWriter:
             logger.info("Saving JSON transcript to %s", path)
 
     def write(self, segment, raw_text: str, corrected_text: str):
-        if self.fmt == "none":
-            return
-
         speaker = segment.speaker
         has_speaker = speaker is not None and str(speaker) not in ("-1", "-2")
+
+        # Always write raw transcript
+        if self._raw_file:
+            raw_entry = {
+                "start": segment.start,
+                "end": segment.end,
+                "speaker": str(speaker) if has_speaker else None,
+                "text": raw_text,
+            }
+            self._raw_file.write(json.dumps(raw_entry) + "\n")
+            self._raw_file.flush()
+
+        if self.fmt == "none":
+            return
 
         if self._text_file:
             start = self._format_time(segment.start)
@@ -162,15 +182,20 @@ class TranscriptWriter:
     def close(self):
         """Flush any remaining buffer text, then close files."""
         logger.debug("TranscriptWriter.close() called, pending_buffer=%r", getattr(self, "_pending_buffer", ""))
-        if self.fmt != "none":
-            buf = getattr(self, "_pending_buffer", "")
-            if buf and buf.strip():
-                logger.info("Flushing remaining buffer to transcript: %r", buf.strip()[:80])
-                if self._text_file:
-                    self._text_file.write(f"{buf.strip()}\n")
-                if self._json_file:
-                    entry = {"start": None, "end": None, "speaker": None, "raw": buf.strip(), "corrected": None}
-                    self._json_file.write(json.dumps(entry) + "\n")
+        buf = getattr(self, "_pending_buffer", "")
+        if buf and buf.strip():
+            logger.info("Flushing remaining buffer to transcript: %r", buf.strip()[:80])
+            if self._raw_file:
+                entry = {"start": None, "end": None, "speaker": None, "text": buf.strip()}
+                self._raw_file.write(json.dumps(entry) + "\n")
+            if self._text_file:
+                self._text_file.write(f"{buf.strip()}\n")
+            if self._json_file:
+                entry = {"start": None, "end": None, "speaker": None, "raw": buf.strip(), "corrected": None}
+                self._json_file.write(json.dumps(entry) + "\n")
+        if self._raw_file:
+            self._raw_file.close()
+            self._raw_file = None
         if self._text_file:
             self._text_file.close()
             self._text_file = None
