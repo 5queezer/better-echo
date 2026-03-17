@@ -1,7 +1,9 @@
 import asyncio
+import json
 import logging
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -17,11 +19,15 @@ from fastapi.responses import HTMLResponse  # noqa: E402
 
 from whisperlivekit import AudioProcessor, TranscriptionEngine, get_inline_ui_html, parse_args  # noqa: E402
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=getattr(logging, os.environ.get("LOG_LEVEL", "INFO").upper(), logging.INFO),
+    format="%(asctime)s - %(levelname)s - %(message)s",
+)
 logger = logging.getLogger(__name__)
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.2")
+TRANSCRIPT_FORMAT = os.environ.get("TRANSCRIPT_FORMAT", "none").lower()
 TERMS_FILE = Path(__file__).parent / "terms.txt"
 
 config = parse_args()
@@ -64,6 +70,7 @@ async def correct_lines(client: httpx.AsyncClient, texts: list[str]) -> list[str
         return texts
 
     user_content = "\n".join(texts)
+    logger.debug("Ollama request: %d lines to correct: %s", len(texts), texts)
 
     try:
         resp = await client.post(
@@ -81,6 +88,7 @@ async def correct_lines(client: httpx.AsyncClient, texts: list[str]) -> list[str
         resp.raise_for_status()
         result = resp.json()["message"]["content"].strip()
         corrected = result.splitlines()
+        logger.debug("Ollama response: %s", corrected)
 
         # Safety: if line count doesn't match, return originals
         if len(corrected) != len(texts):
@@ -96,12 +104,97 @@ async def correct_lines(client: httpx.AsyncClient, texts: list[str]) -> list[str
         return texts
 
 
-async def corrected_results(results_gen, client: httpx.AsyncClient):
+class TranscriptWriter:
+    """Continuously appends transcript segments to text and/or JSONL files."""
+
+    def __init__(self, fmt: str):
+        self.fmt = fmt
+        self._text_file = None
+        self._json_file = None
+        if fmt == "none":
+            return
+
+        ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        if fmt in ("text", "both"):
+            path = Path(f"transcript_{ts}.txt")
+            self._text_file = open(path, "a")
+            logger.info("Saving text transcript to %s", path)
+        if fmt in ("json", "both"):
+            path = Path(f"transcript_{ts}.jsonl")
+            self._json_file = open(path, "a")
+            logger.info("Saving JSON transcript to %s", path)
+
+    def write(self, segment, raw_text: str, corrected_text: str):
+        if self.fmt == "none":
+            return
+
+        speaker = segment.speaker
+        has_speaker = speaker is not None and str(speaker) not in ("-1", "-2")
+
+        if self._text_file:
+            start = self._format_time(segment.start)
+            end = self._format_time(segment.end)
+            prefix = f"Speaker {speaker}: " if has_speaker else ""
+            self._text_file.write(f"[{start} - {end}] {prefix}{corrected_text}\n")
+            self._text_file.flush()
+
+        if self._json_file:
+            entry = {
+                "start": segment.start,
+                "end": segment.end,
+                "speaker": str(speaker) if has_speaker else None,
+                "raw": raw_text,
+                "corrected": corrected_text,
+            }
+            self._json_file.write(json.dumps(entry) + "\n")
+            self._json_file.flush()
+
+    def update_buffer(self, text: str):
+        """Track the latest non-empty buffer text so it can be flushed on close."""
+        if text and text.strip():
+            self._pending_buffer = text
+            logger.debug("Transcript buffer updated: %r", text[:80])
+
+    def clear_buffer(self):
+        """Clear pending buffer after its content has been finalized and written."""
+        self._pending_buffer = ""
+
+    def close(self):
+        """Flush any remaining buffer text, then close files."""
+        logger.debug("TranscriptWriter.close() called, pending_buffer=%r", getattr(self, "_pending_buffer", ""))
+        if self.fmt != "none":
+            buf = getattr(self, "_pending_buffer", "")
+            if buf and buf.strip():
+                logger.info("Flushing remaining buffer to transcript: %r", buf.strip()[:80])
+                if self._text_file:
+                    self._text_file.write(f"{buf.strip()}\n")
+                if self._json_file:
+                    entry = {"start": None, "end": None, "speaker": None, "raw": buf.strip(), "corrected": None}
+                    self._json_file.write(json.dumps(entry) + "\n")
+        if self._text_file:
+            self._text_file.close()
+            self._text_file = None
+        if self._json_file:
+            self._json_file.close()
+            self._json_file = None
+
+    @staticmethod
+    def _format_time(seconds):
+        if seconds is None:
+            return "?:??:??.??"
+        h = int(seconds // 3600)
+        m = int((seconds % 3600) // 60)
+        s = seconds % 60
+        return f"{h}:{m:02d}:{s:05.2f}"
+
+
+async def corrected_results(results_gen, client: httpx.AsyncClient, writer: TranscriptWriter):
     """Wrap the results async generator to apply LLM correction to finalized lines."""
     seen = 0
     corrections: dict[int, str] = {}
 
     async for front_data in results_gen:
+        writer.update_buffer(front_data.buffer_transcription or "")
         n = len(front_data.lines)
 
         # Correct newly finalized lines
@@ -116,8 +209,10 @@ async def corrected_results(results_gen, client: httpx.AsyncClient):
 
             if new_texts:
                 corrected = await correct_lines(client, new_texts)
-                for idx, text in zip(new_indices, corrected):
-                    corrections[idx] = text
+                for idx, (raw, cor) in zip(new_indices, zip(new_texts, corrected)):
+                    corrections[idx] = cor
+                    writer.write(front_data.lines[idx], raw, cor)
+                writer.clear_buffer()
 
             seen = n
 
@@ -196,7 +291,8 @@ async def websocket_endpoint(websocket: WebSocket):
     )
 
     results_gen = await audio_processor.create_tasks()
-    corrected_gen = corrected_results(results_gen, app.state.http_client)
+    writer = TranscriptWriter(TRANSCRIPT_FORMAT)
+    corrected_gen = corrected_results(results_gen, app.state.http_client, writer)
 
     websocket_task = asyncio.create_task(
         handle_websocket_results(websocket, corrected_gen, diff_tracker)
@@ -217,6 +313,7 @@ async def websocket_endpoint(websocket: WebSocket):
             await websocket_task
         except (asyncio.CancelledError, Exception):
             pass
+        writer.close()
         await audio_processor.cleanup()
 
 

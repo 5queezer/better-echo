@@ -50,6 +50,22 @@ Open the printed URL in your browser, allow microphone access, and start speakin
 | `HF_TOKEN` | — | HuggingFace token (required for diarization) |
 | `OLLAMA_URL` | `http://localhost:11434` | Ollama API endpoint |
 | `OLLAMA_MODEL` | `llama3.2` | Model used for transcription correction |
+| `TRANSCRIPT_FORMAT` | `none` | Save transcripts: `text`, `json`, `both`, or `none` |
+| `LOG_LEVEL` | `INFO` | Logging verbosity (`DEBUG`, `INFO`, `WARNING`, etc.) |
+
+## Transcript saving
+
+Set `TRANSCRIPT_FORMAT` to continuously save transcripts to the working directory. Each session creates timestamped files (e.g. `transcript_2026-03-17_01-54-30`).
+
+- **`text`** — human-readable with timestamps and speaker labels:
+  ```
+  [0:01:23.45 - 0:01:25.67] Speaker 1: Hello, how are you?
+  ```
+- **`json`** — JSONL with both raw Whisper output and corrected text:
+  ```json
+  {"start": 83.45, "end": 85.67, "speaker": "1", "raw": "hello how are you", "corrected": "Hello, how are you?"}
+  ```
+- **`both`** — saves `.txt` and `.jsonl` side by side
 
 ## Domain vocabulary
 
