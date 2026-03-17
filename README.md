@@ -1,29 +1,49 @@
 # better-echo
 
-Real-time speech-to-text with LLM-powered transcription correction. Wraps [whisperlivekit](https://github.com/QuentinFuworworklP/whisperlivekit) and sends finalized lines through a local Ollama model to fix domain-specific terminology.
+**Real-time speech-to-text that actually gets your words right.** Powered by Whisper and a local LLM, better-echo fixes domain-specific terminology, punctuation, and misheard words — all running on your machine, with zero data leaving your network.
 
-## Setup
+## Why better-echo?
+
+Standard speech-to-text tools stumble on technical jargon — "Kubernetes" becomes "Cooper Netties," "Celery" becomes "salary." better-echo solves this by piping Whisper's output through a local [Ollama](https://ollama.com) model that knows your vocabulary. You define your domain terms once, and every transcript comes back clean.
+
+**Key features:**
+- **Local & private** — all processing on your hardware, no cloud APIs, no telemetry
+- **Domain-aware correction** — teach it your terminology via a simple `terms.txt` file
+- **Speaker diarization** — identify who said what (via [pyannote](https://github.com/pyannote/pyannote-audio) + [diart](https://github.com/juanmc2005/diart))
+- **Auto language detection** — detects and tracks language per speaker with voting stabilization
+- **Transcript export** — save as human-readable text, structured JSONL, or both
+- **Cross-platform** — Linux (NVIDIA CUDA) and macOS (Apple Silicon MPS)
+
+## Quick start
 
 ```bash
-# Python 3.13, uses uv
+# 1. Clone and install (Python 3.13, uv)
+git clone https://github.com/5queezer/better-echo.git
+cd better-echo
 uv sync
 
-# Copy and fill in environment variables
-cp .env.example .env
+# 2. Start Ollama with a correction model
+ollama pull llama3.2 && ollama serve
+
+# 3. Run
+uv run python main.py
+```
+
+Open the printed URL in your browser, allow microphone access, and start speaking. That's it.
+
+## Setup details
+
+### Environment
+
+```bash
+cp .env.example .env   # then fill in your values
 ```
 
 ### Platform notes
 
-- **Linux with NVIDIA GPU** — `uv sync` installs CUDA 12.9 binaries automatically. Make sure you have NVIDIA drivers installed.
-- **macOS (Apple Silicon / M1+)** — `uv sync` installs CPU-only PyTorch. The M1/M2/M3 GPU is used automatically via PyTorch's MPS backend when available (`PYTORCH_ENABLE_MPS_FALLBACK=1` is set by the app). Expect slower inference than a dedicated NVIDIA GPU — use a smaller model size (e.g. `--model-size base` or `small`) if real-time performance is needed.
-- **macOS (Intel)** — works the same as Apple Silicon but without MPS GPU acceleration (CPU only).
-
-### Ollama (for transcription correction)
-
-```bash
-ollama pull llama3.2
-ollama serve
-```
+- **Linux (NVIDIA GPU)** — `uv sync` installs CUDA 12.9 binaries automatically. Requires NVIDIA drivers.
+- **macOS (Apple Silicon)** — uses PyTorch MPS backend automatically. For real-time performance, use a smaller model (`--model-size base` or `small`).
+- **macOS (Intel)** — CPU only, no GPU acceleration.
 
 ### Speaker diarization (optional)
 
@@ -47,9 +67,7 @@ uv run python main.py --diarization --diarization-backend diart
 uv run python main.py --model-size large-v3 --language de
 ```
 
-Open the printed URL in your browser, allow microphone access, and start speaking.
-
-## Environment variables
+## Configuration
 
 | Variable | Default | Description |
 |---|---|---|
@@ -59,9 +77,20 @@ Open the printed URL in your browser, allow microphone access, and start speakin
 | `TRANSCRIPT_FORMAT` | `none` | Save transcripts: `text`, `json`, `both`, or `none` |
 | `LOG_LEVEL` | `INFO` | Logging verbosity (`DEBUG`, `INFO`, `WARNING`, etc.) |
 
-## Transcript saving
+### Domain vocabulary
 
-Set `TRANSCRIPT_FORMAT` to continuously save transcripts to the working directory. Each session creates timestamped files (e.g. `transcript_2026-03-17_01-54-30`).
+Edit `terms.txt` to add domain-specific terms the LLM should know about:
+
+```
+Kubernetes
+Celery: Python distributed task queue
+FastAPI
+pyannote
+```
+
+### Transcript saving
+
+Set `TRANSCRIPT_FORMAT` to continuously save transcripts. Each session creates timestamped files (e.g. `transcript_2026-03-17_01-54-30`).
 
 - **`text`** — human-readable with timestamps and speaker labels:
   ```
@@ -73,13 +102,28 @@ Set `TRANSCRIPT_FORMAT` to continuously save transcripts to the working director
   ```
 - **`both`** — saves `.txt` and `.jsonl` side by side
 
+## How it works
+
+```
+Microphone → Whisper (speech-to-text) → Ollama LLM (correction) → Browser UI
+                                    ↗
+                          terms.txt (domain vocabulary)
+```
+
+better-echo wraps [whisperlivekit](https://github.com/QuentinFuworworklP/whisperlivekit) and streams audio from your browser over a WebSocket. Finalized transcript lines are sent to a local Ollama model that corrects terminology and punctuation using your custom term list. Results stream back to the browser in real time.
+
 ## Privacy
 
 No telemetry, analytics, or tracking. All audio and text processing happens locally. The only network call is to your own Ollama instance for transcription correction.
 
+## License
+
+[MIT](LICENSE) — use it however you want.
+
 ## Changelog
 
 ### 2026-03-17
+- Revamp README with hook, feature highlights, quick-start guide, and architecture overview (#11)
 - Improved language auto-detection with voting stabilization and per-speaker tracking (#9)
 - Updated uv.lock to include all declared dependencies
 
@@ -96,11 +140,3 @@ No telemetry, analytics, or tracking. All audio and text processing happens loca
 - Add macOS (Apple Silicon) compatibility (#1)
 - Transcript writer (initial)
 
-## Domain vocabulary
-
-Edit `terms.txt` to add domain-specific terms the LLM should know about:
-
-```
-Kubernetes
-Celery: Python distributed task queue
-```
