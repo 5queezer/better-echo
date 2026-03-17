@@ -3,6 +3,7 @@ name = "better-echo"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
+license = "MIT"
 requires-python = ">=3.13"
 dependencies = [
     "diart>=0.9.2",
