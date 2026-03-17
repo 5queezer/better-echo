@@ -1,0 +1,12 @@
+# Domain-specific terms for transcription correction.
+# One term per line. Add a colon + explanation for ambiguous terms.
+#
+# Simple terms — correct spelling is enough:
+# Kubernetes
+# PostgreSQL
+# FastAPI
+#
+# Ambiguous terms — add context so the LLM knows which meaning:
+# Celery: Python distributed task queue
+# RAFT: consensus algorithm for distributed systems
+# Kafka: Apache Kafka event streaming platform
