@@ -13,4 +13,5 @@ dependencies = [
     "python-multipart>=0.0.22",
     "whisperlivekit[cu129]>=0.2.20.post1; sys_platform == 'linux'",
     "whisperlivekit>=0.2.20.post1; sys_platform == 'darwin'",
+    "mlx-whisper>=0.4.2; sys_platform == 'darwin'",
 ]
